@@ -56,6 +56,7 @@ import li.songe.gkd.util.map
 import li.songe.gkd.util.showActionToast
 import li.songe.gkd.util.storeFlow
 import li.songe.gkd.util.toast
+import li.songe.gkd.util.useLogLifecycle
 import li.songe.selector.MatchOption
 import li.songe.selector.Selector
 import java.lang.ref.WeakReference
@@ -89,6 +90,7 @@ class A11yService : AccessibilityService(), OnCreate, OnA11yConnected, OnA11yEve
     val scope = CoroutineScope(Dispatchers.Default).apply { onDestroyed { cancel() } }
 
     init {
+        useLogLifecycle()
         useRunningState()
         useAliveView()
         useCaptureVolume()
@@ -253,6 +255,7 @@ private fun A11yService.useMatchRule() {
             }
         }
         var lastNodeUsed = false
+        a11yContext.clearOldAppNodeCache()
         for (rule in activityRule.priorityRules) { // 规则数量有可能过多导致耗时过长
             if (delayRule != null && delayRule !== rule) continue
             val statusCode = rule.status
@@ -488,9 +491,16 @@ private fun A11yService.useRunningState() {
     onCreated {
         A11yService.weakInstance = WeakReference(this)
         A11yService.isRunning.value = true
+        if (!storeFlow.value.enableService) {
+            // https://github.com/gkd-kit/gkd/issues/754
+            storeFlow.update { it.copy(enableService = true) }
+        }
         ManageService.autoStart()
     }
     onDestroyed {
+        if (storeFlow.value.enableService) {
+            storeFlow.update { it.copy(enableService = false) }
+        }
         A11yService.weakInstance = WeakReference(null)
         A11yService.isRunning.value = false
     }
