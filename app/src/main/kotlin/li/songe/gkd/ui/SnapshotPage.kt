@@ -59,6 +59,7 @@ import li.songe.gkd.ui.component.EmptyText
 import li.songe.gkd.ui.component.StartEllipsisText
 import li.songe.gkd.ui.component.waitResult
 import li.songe.gkd.ui.style.EmptyHeight
+import li.songe.gkd.ui.style.scaffoldPadding
 import li.songe.gkd.util.IMPORT_SHORT_URL
 import li.songe.gkd.util.LocalNavController
 import li.songe.gkd.util.ProfileTransitions
@@ -79,8 +80,6 @@ fun SnapshotPage() {
     val vm = viewModel<SnapshotVm>()
     val snapshots by vm.snapshotsState.collectAsState()
 
-    vm.uploadOptions.ShowDialog()
-
     var selectedSnapshot by remember {
         mutableStateOf<Snapshot?>(null)
     }
@@ -98,13 +97,13 @@ fun SnapshotPage() {
                     )
                 }
             },
-            title = { Text(text = if (snapshots.isEmpty()) "快照记录" else "快照记录-${snapshots.size}") },
+            title = { Text(text = "快照记录") },
             actions = {
                 if (snapshots.isNotEmpty()) {
                     IconButton(onClick = throttle(fn = vm.viewModelScope.launchAsFn(Dispatchers.IO) {
                         context.mainVm.dialogFlow.waitResult(
                             title = "删除记录",
-                            text = "确定删除全部快照记录?",
+                            text = "确定删除全部 ${snapshots.size} 条快照记录?",
                             error = true,
                         )
                         snapshots.forEach { s ->
@@ -121,7 +120,7 @@ fun SnapshotPage() {
             })
     }, content = { contentPadding ->
         LazyColumn(
-            modifier = Modifier.padding(contentPadding),
+            modifier = Modifier.scaffoldPadding(contentPadding),
         ) {
             items(snapshots, { it.id }) { snapshot ->
                 if (snapshot.id != snapshots.firstOrNull()?.id) {
@@ -246,8 +245,9 @@ fun SnapshotPage() {
                         text = "生成链接(需科学上网)", modifier = Modifier
                             .clickable(onClick = throttle {
                                 selectedSnapshot = null
-                                vm.uploadOptions.startTask(
+                                context.mainVm.uploadOptions.startTask(
                                     getFile = { SnapshotExt.getSnapshotZipFile(snapshotVal.id) },
+                                    showHref = { IMPORT_SHORT_URL + it.id },
                                     onSuccessResult = vm.viewModelScope.launchAsFn<GithubPoliciesAsset>(
                                         Dispatchers.IO
                                     ) {

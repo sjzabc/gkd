@@ -1,14 +1,13 @@
-import java.io.ByteArrayOutputStream
-
-fun String.runCommand(currentWorkingDir: File = file("./")): String {
-    val byteOut = ByteArrayOutputStream()
-    project.exec {
-        workingDir = currentWorkingDir
-        commandLine = this@runCommand.split("\\s".toRegex())
-        standardOutput = byteOut
-        errorOutput = ByteArrayOutputStream()
+fun String.runCommand(): String {
+    val process = ProcessBuilder(split(" "))
+        .redirectErrorStream(true)
+        .start()
+    val output = process.inputStream.bufferedReader().readText().trim()
+    val exitCode = process.waitFor()
+    if (exitCode != 0) {
+        error("Command failed with exit code $exitCode: $output")
     }
-    return String(byteOut.toByteArray()).trim()
+    return output
 }
 
 data class GitInfo(
@@ -58,8 +57,8 @@ android {
         targetSdk = project.properties["android_targetSdk"].toString().toInt()
 
         applicationId = "li.songe.gkd"
-        versionCode = 45
-        versionName = "1.9.0-beta.3"
+        versionCode = 52
+        versionName = "1.9.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -96,11 +95,11 @@ android {
     buildTypes {
         all {
             signingConfig = currentSigning
-        }
-        release {
             if (gitInfo?.tagName == null) {
                 versionNameSuffix = vnSuffix
             }
+        }
+        release {
             isMinifyEnabled = true
             isShrinkResources = true
             isDebuggable = false
@@ -112,7 +111,6 @@ android {
             )
         }
         debug {
-            versionNameSuffix = vnSuffix
             applicationIdSuffix = ".debug"
 
             // add "debug" suffix
@@ -147,12 +145,15 @@ android {
     }
     kotlinOptions {
         jvmTarget = JavaVersion.VERSION_17.majorVersion
-        freeCompilerArgs += "-opt-in=kotlin.RequiresOptIn"
-        freeCompilerArgs += "-opt-in=kotlinx.coroutines.FlowPreview"
-        freeCompilerArgs += "-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi"
-        freeCompilerArgs += "-opt-in=kotlinx.serialization.ExperimentalSerializationApi"
-        freeCompilerArgs += "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api"
-        freeCompilerArgs += "-opt-in=androidx.compose.foundation.ExperimentalFoundationApi"
+        freeCompilerArgs += listOf(
+            "-opt-in=kotlin.RequiresOptIn",
+            "-opt-in=kotlinx.coroutines.FlowPreview",
+            "-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi",
+            "-opt-in=kotlinx.serialization.ExperimentalSerializationApi",
+            "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api",
+            "-opt-in=androidx.compose.foundation.ExperimentalFoundationApi",
+            "-opt-in=androidx.compose.animation.graphics.ExperimentalAnimationGraphicsApi",
+        )
     }
     dependenciesInfo.includeInApk = false
     packagingOptions.resources.excludes += setOf(
@@ -182,12 +183,14 @@ configurations.configureEach {
 }
 
 composeCompiler {
-//    featureFlags.addAll(ComposeFeatureFlag.StrongSkipping) // default StrongSkipping
     reportsDestination = layout.buildDirectory.dir("compose_compiler")
-    stabilityConfigurationFile = rootProject.layout.projectDirectory.file("stability_config.conf")
+    stabilityConfigurationFiles.addAll(
+        project.layout.projectDirectory.file("stability_config.conf"),
+    )
 }
 
 dependencies {
+    implementation(libs.kotlin.stdlib)
 
     implementation(project(mapOf("path" to ":selector")))
 
@@ -196,6 +199,9 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
 
     implementation(libs.compose.ui)
+    implementation(libs.compose.ui.graphics)
+    implementation(libs.compose.animation)
+    implementation(libs.compose.animation.graphics)
     implementation(libs.compose.icons)
     implementation(libs.compose.preview)
     debugImplementation(libs.compose.tooling)
@@ -249,6 +255,7 @@ dependencies {
     implementation(libs.androidx.splashscreen)
 
     implementation(libs.coil.compose)
+    implementation(libs.coil.network)
     implementation(libs.coil.gif)
 
     implementation(libs.exp4j)

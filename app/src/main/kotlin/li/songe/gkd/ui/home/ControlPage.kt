@@ -44,6 +44,7 @@ import li.songe.gkd.ui.component.AuthCard
 import li.songe.gkd.ui.component.SettingItem
 import li.songe.gkd.ui.component.TextSwitch
 import li.songe.gkd.ui.style.EmptyHeight
+import li.songe.gkd.ui.style.itemHorizontalPadding
 import li.songe.gkd.ui.style.itemPadding
 import li.songe.gkd.util.HOME_PAGE_URL
 import li.songe.gkd.util.LocalNavController
@@ -87,7 +88,7 @@ fun useControlPage(): ScaffoldExt {
                 }
             })
         }
-    ) { padding ->
+    ) { contentPadding ->
         val latestRecordDesc by vm.latestRecordDescFlow.collectAsState()
         val subsStatus by vm.subsStatusFlow.collectAsState()
         val store by storeFlow.collectAsState()
@@ -103,7 +104,7 @@ fun useControlPage(): ScaffoldExt {
         Column(
             modifier = Modifier
                 .verticalScroll(scrollState)
-                .padding(padding)
+                .padding(contentPadding)
         ) {
             if (writeSecureSettings) {
                 TextSwitch(
@@ -162,14 +163,14 @@ fun useControlPage(): ScaffoldExt {
 
             if (ruleSummary.slowGroupCount > 0) {
                 SettingItem(
-                    title = "耗时查询-${ruleSummary.slowGroupCount}",
-                    subtitle = "可能导致触发缓慢或更多耗电",
+                    title = "缓慢查询",
+                    subtitle = "存在 ${ruleSummary.slowGroupCount} 条记录",
                     onClick = {
                         navController.toDestinationsNavigator().navigate(SlowGroupPageDestination)
                     }
                 )
             }
-            HorizontalDivider()
+            HorizontalDivider(modifier = Modifier.padding(horizontal = itemHorizontalPadding))
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
