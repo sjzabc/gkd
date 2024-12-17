@@ -37,14 +37,14 @@ import com.blankj.utilcode.util.LogUtils
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.update
 import li.songe.gkd.META
 import li.songe.gkd.MainActivity
 import li.songe.gkd.permission.shizukuOkState
 import li.songe.gkd.permission.writeSecureSettingsState
 import li.songe.gkd.service.A11yService
 import li.songe.gkd.service.fixRestartService
-import li.songe.gkd.shizuku.newPackageManager
+import li.songe.gkd.shizuku.execCommandForResult
 import li.songe.gkd.ui.component.updateDialogOptions
 import li.songe.gkd.ui.style.itemHorizontalPadding
 import li.songe.gkd.util.LocalNavController
@@ -52,6 +52,7 @@ import li.songe.gkd.util.ProfileTransitions
 import li.songe.gkd.util.launchAsFn
 import li.songe.gkd.util.openA11ySettings
 import li.songe.gkd.util.openUri
+import li.songe.gkd.util.storeFlow
 import li.songe.gkd.util.throttle
 import li.songe.gkd.util.toast
 import rikka.shizuku.Shizuku
@@ -132,7 +133,7 @@ fun AuthA11yPage() {
                         modifier = Modifier
                             .padding(cardHorizontalPadding, 0.dp)
                             .clickable {
-                                context.openUri("https://gkd.li/?r=2")
+                                openUri("https://gkd.li?r=2")
                             },
                         text = "无法开启无障碍?",
                         style = MaterialTheme.typography.bodySmall,
@@ -159,36 +160,7 @@ fun AuthA11yPage() {
                     text = "1. 授予[写入安全设置权限]\n2. 授权永久有效, 包含[无障碍权限]\n3. 应用重启后可自动打开无障碍服务\n4. 在通知栏快捷开关可快捷重启, 无感保活"
                 )
                 if (!writeSecureSettings) {
-                    Row(
-                        modifier = Modifier
-                            .padding(4.dp, 0.dp)
-                            .fillMaxWidth(),
-                    ) {
-                        TextButton(onClick = throttle(fn = vm.viewModelScope.launchAsFn(Dispatchers.IO) {
-                            context.grantPermissionByShizuku()
-                        })) {
-                            Text(
-                                text = "Shizuku授权",
-                                style = MaterialTheme.typography.bodyLarge,
-                            )
-                        }
-                        TextButton(onClick = throttle(fn = vm.viewModelScope.launchAsFn(Dispatchers.IO) {
-                            grantPermissionByRoot()
-                        })) {
-                            Text(
-                                text = "ROOT授权",
-                                style = MaterialTheme.typography.bodyLarge,
-                            )
-                        }
-                        TextButton(onClick = {
-                            vm.showCopyDlgFlow.value = true
-                        }) {
-                            Text(
-                                text = "手动授权",
-                                style = MaterialTheme.typography.bodyLarge,
-                            )
-                        }
-                    }
+                    AuthButtonGroup()
                 } else {
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
@@ -219,6 +191,44 @@ fun AuthA11yPage() {
                 }
                 Spacer(modifier = Modifier.height(4.dp))
             }
+            if (writeSecureSettings) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Card(
+                    modifier = Modifier
+                        .padding(itemHorizontalPadding, 0.dp)
+                        .fillMaxWidth(),
+                    onClick = { }
+                ) {
+                    Text(
+                        modifier = Modifier.padding(cardHorizontalPadding, 8.dp),
+                        text = "解除可能受到的无障碍限制",
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    Text(
+                        modifier = Modifier.padding(cardHorizontalPadding, 0.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        text = "1. 某些系统有更严格的无障碍限制\n2. 在 GKD 更新后会限制其开关无障碍\n3. 重新授权可解决此问题"
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        modifier = Modifier.padding(cardHorizontalPadding, 0.dp),
+                        text = "若能正常开关无障碍请忽略此项",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    AuthButtonGroup()
+                    Text(
+                        modifier = Modifier
+                            .padding(cardHorizontalPadding, 0.dp)
+                            .clickable {
+                                openUri("https://gkd.li?r=2")
+                            },
+                        text = "其他方式解除限制",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
+            }
         }
     }
 
@@ -239,6 +249,16 @@ fun AuthA11yPage() {
                                 .padding(4.dp)
                         )
                     }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        modifier = Modifier
+                            .clickable {
+                                openUri("https://gkd.li?r=3")
+                            },
+                        text = "运行后授权失败?",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
                 }
             },
             confirmButton = {
@@ -259,24 +279,27 @@ fun AuthA11yPage() {
     }
 }
 
-private val commandText by lazy { "adb shell pm grant ${META.appId} android.permission.WRITE_SECURE_SETTINGS" }
+private val innerCommandText by lazy {
+    arrayOf(
+        "appops set ${META.appId} ACCESS_RESTRICTED_SETTINGS allow",
+        "pm grant ${META.appId} android.permission.WRITE_SECURE_SETTINGS"
+    ).joinToString("; ")
+}
+private val commandText by lazy { "adb shell \"${innerCommandText}\"" }
+
+private fun successAuthExec() {
+    if (writeSecureSettingsState.updateAndGet()) {
+        toast("授权成功")
+        storeFlow.update { it.copy(enableService = true) }
+        fixRestartService()
+    }
+}
 
 private suspend fun MainActivity.grantPermissionByShizuku() {
     if (shizukuOkState.stateFlow.value) {
         try {
-            val manager = newPackageManager()
-            if (manager != null) {
-                manager.grantRuntimePermission(
-                    META.appId,
-                    "android.permission.WRITE_SECURE_SETTINGS",
-                    0, // maybe others
-                )
-                delay(500)
-                if (writeSecureSettingsState.updateAndGet()) {
-                    toast("授权成功")
-                    fixRestartService()
-                }
-            }
+            execCommandForResult(innerCommandText)
+            successAuthExec()
         } catch (e: Exception) {
             toast("授权失败:${e.message}")
             LogUtils.d(e)
@@ -298,17 +321,54 @@ private fun grantPermissionByRoot() {
     try {
         p = Runtime.getRuntime().exec("su")
         val o = DataOutputStream(p.outputStream)
-        o.writeBytes("pm grant ${META.appId} android.permission.WRITE_SECURE_SETTINGS\nexit\n")
+        o.writeBytes("${innerCommandText}\nexit\n")
         o.flush()
         o.close()
         p.waitFor()
         if (p.exitValue() == 0) {
-            toast("授权成功")
+            successAuthExec()
         }
     } catch (e: Exception) {
         toast("授权失败:${e.message}")
         LogUtils.d(e)
     } finally {
         p?.destroy()
+    }
+}
+
+
+@Composable
+private fun AuthButtonGroup() {
+    val context = LocalContext.current as MainActivity
+    val vm = viewModel<AuthA11yVm>()
+    Row(
+        modifier = Modifier
+            .padding(4.dp, 0.dp)
+            .fillMaxWidth(),
+    ) {
+        TextButton(onClick = throttle(fn = vm.viewModelScope.launchAsFn(Dispatchers.IO) {
+            context.grantPermissionByShizuku()
+        })) {
+            Text(
+                text = "Shizuku授权",
+                style = MaterialTheme.typography.bodyLarge,
+            )
+        }
+        TextButton(onClick = {
+            vm.showCopyDlgFlow.value = true
+        }) {
+            Text(
+                text = "手动授权",
+                style = MaterialTheme.typography.bodyLarge,
+            )
+        }
+        TextButton(onClick = throttle(fn = vm.viewModelScope.launchAsFn(Dispatchers.IO) {
+            grantPermissionByRoot()
+        })) {
+            Text(
+                text = "ROOT授权",
+                style = MaterialTheme.typography.bodyLarge,
+            )
+        }
     }
 }

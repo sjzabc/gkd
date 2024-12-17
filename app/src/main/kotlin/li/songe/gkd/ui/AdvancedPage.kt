@@ -5,7 +5,6 @@ import android.content.Context
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -15,16 +14,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalTextStyle
@@ -51,7 +46,6 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.blankj.utilcode.util.LogUtils
@@ -62,7 +56,6 @@ import com.ramcosta.composedestinations.generated.destinations.ActivityLogPageDe
 import com.ramcosta.composedestinations.generated.destinations.SnapshotPageDestination
 import com.ramcosta.composedestinations.utils.toDestinationsNavigator
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.update
 import li.songe.gkd.MainActivity
 import li.songe.gkd.appScope
 import li.songe.gkd.debug.FloatingService
@@ -83,13 +76,8 @@ import li.songe.gkd.ui.style.itemPadding
 import li.songe.gkd.ui.style.titleItemPadding
 import li.songe.gkd.util.LocalNavController
 import li.songe.gkd.util.ProfileTransitions
-import li.songe.gkd.util.buildLogFile
 import li.songe.gkd.util.launchAsFn
-import li.songe.gkd.util.launchTry
 import li.songe.gkd.util.openUri
-import li.songe.gkd.util.privacyStoreFlow
-import li.songe.gkd.util.saveFileToDownloads
-import li.songe.gkd.util.shareFile
 import li.songe.gkd.util.storeFlow
 import li.songe.gkd.util.throttle
 import li.songe.gkd.util.toast
@@ -103,8 +91,6 @@ fun AdvancedPage() {
     val navController = LocalNavController.current
     val store by storeFlow.collectAsState()
     val snapshotCount by vm.snapshotCountFlow.collectAsState()
-
-    vm.uploadOptions.ShowDialog()
 
     var showEditPortDlg by remember {
         mutableStateOf(false)
@@ -150,6 +136,11 @@ fun AdvancedPage() {
                         httpServerPort = newPort
                     )
                     showEditPortDlg = false
+                    if (HttpService.httpServerFlow.value != null) {
+                        toast("已更新, 重启服务")
+                    } else {
+                        toast("已更新")
+                    }
                 }
             ) {
                 Text(
@@ -163,111 +154,6 @@ fun AdvancedPage() {
                 )
             }
         })
-    }
-
-    var showShareLogDlg by remember {
-        mutableStateOf(false)
-    }
-    if (showShareLogDlg) {
-        Dialog(onDismissRequest = { showShareLogDlg = false }) {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                shape = RoundedCornerShape(16.dp),
-            ) {
-                val modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp)
-                Text(
-                    text = "分享到其他应用", modifier = Modifier
-                        .clickable(onClick = throttle {
-                            showShareLogDlg = false
-                            vm.viewModelScope.launchTry(Dispatchers.IO) {
-                                val logZipFile = buildLogFile()
-                                context.shareFile(logZipFile, "分享日志文件")
-                            }
-                        })
-                        .then(modifier)
-                )
-                Text(
-                    text = "保存到下载", modifier = Modifier
-                        .clickable(onClick = throttle {
-                            showShareLogDlg = false
-                            vm.viewModelScope.launchTry(Dispatchers.IO) {
-                                val logZipFile = buildLogFile()
-                                context.saveFileToDownloads(logZipFile)
-                            }
-                        })
-                        .then(modifier)
-                )
-                Text(
-                    text = "生成链接(需科学上网)",
-                    modifier = Modifier
-                        .clickable(onClick = throttle {
-                            showShareLogDlg = false
-                            vm.uploadOptions.startTask(getFile = { buildLogFile() })
-                        })
-                        .then(modifier)
-                )
-            }
-        }
-    }
-
-    var showEditCookieDlg by remember { mutableStateOf(false) }
-    if (showEditCookieDlg) {
-        val privacyStore by privacyStoreFlow.collectAsState()
-        var value by remember {
-            mutableStateOf(privacyStore.githubCookie ?: "")
-        }
-        AlertDialog(
-            onDismissRequest = {
-                if (value.isEmpty()) {
-                    showEditCookieDlg = false
-                }
-            },
-            title = {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(text = "Github Cookie")
-                    IconButton(onClick = throttle {
-                        context.openUri("https://gkd.li/?r=1")
-                    }) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Outlined.HelpOutline,
-                            contentDescription = null,
-                        )
-                    }
-                }
-            },
-            text = {
-                OutlinedTextField(
-                    value = value,
-                    onValueChange = {
-                        value = it.filter { c -> c != '\n' && c != '\r' }
-                    },
-                    placeholder = { Text(text = "请输入 Github Cookie") },
-                    modifier = Modifier.fillMaxWidth(),
-                    maxLines = 10,
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    showEditCookieDlg = false
-                    privacyStoreFlow.update { it.copy(githubCookie = value.trim()) }
-                }) {
-                    Text(text = "确认")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showEditCookieDlg = false }) {
-                    Text(text = "取消")
-                }
-            }
-        )
     }
 
     val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior()
@@ -315,7 +201,8 @@ fun AdvancedPage() {
                 ShizukuFragment()
             }
 
-            val httpServerRunning by HttpService.isRunning.collectAsState()
+            val server by HttpService.httpServerFlow.collectAsState()
+            val httpServerRunning = server != null
             val localNetworkIps by HttpService.localNetworkIpsFlow.collectAsState()
 
             Text(
@@ -350,7 +237,7 @@ fun AdvancedPage() {
                                     color = MaterialTheme.colorScheme.primary,
                                     style = LocalTextStyle.current.copy(textDecoration = TextDecoration.Underline),
                                     modifier = Modifier.clickable(onClick = throttle {
-                                        context.openUri("http://127.0.0.1:${store.httpServerPort}")
+                                        openUri("http://127.0.0.1:${store.httpServerPort}")
                                     }),
                                 )
                                 Spacer(modifier = Modifier.width(2.dp))
@@ -362,7 +249,7 @@ fun AdvancedPage() {
                                     color = MaterialTheme.colorScheme.primary,
                                     style = LocalTextStyle.current.copy(textDecoration = TextDecoration.Underline),
                                     modifier = Modifier.clickable(onClick = throttle {
-                                        context.openUri("http://${host}:${store.httpServerPort}")
+                                        openUri("http://${host}:${store.httpServerPort}")
                                     })
                                 )
                             }
@@ -371,14 +258,14 @@ fun AdvancedPage() {
                 }
                 Switch(
                     checked = httpServerRunning,
-                    onCheckedChange = vm.viewModelScope.launchAsFn<Boolean> {
+                    onCheckedChange = throttle(fn = vm.viewModelScope.launchAsFn<Boolean> {
                         if (it) {
                             requiredPermission(context, notificationState)
                             HttpService.start()
                         } else {
                             HttpService.stop()
                         }
-                    }
+                    })
                 )
             }
 
@@ -408,12 +295,15 @@ fun AdvancedPage() {
                 color = MaterialTheme.colorScheme.primary,
             )
 
-            SettingItem(
-                title = "快照记录" + (if (snapshotCount > 0) "-$snapshotCount" else ""),
-                onClick = {
-                    navController.toDestinationsNavigator().navigate(SnapshotPageDestination)
-                }
-            )
+            if (snapshotCount > 0) {
+                SettingItem(
+                    title = "快照记录",
+                    subtitle = "存在 $snapshotCount 条记录",
+                    onClick = {
+                        navController.toDestinationsNavigator().navigate(SnapshotPageDestination)
+                    }
+                )
+            }
 
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
                 val screenshotRunning by ScreenshotService.isRunning.collectAsState()
@@ -506,11 +396,11 @@ fun AdvancedPage() {
                 subtitle = "生成快照/日志链接",
                 suffix = "获取教程",
                 onSuffixClick = {
-                    context.openUri("https://gkd.li/?r=1")
+                    openUri("https://gkd.li?r=1")
                 },
                 imageVector = Icons.Default.Edit,
                 onClick = {
-                    showEditCookieDlg = true
+                    context.mainVm.showEditCookieDlgFlow.value = true
                 }
             )
 
@@ -538,52 +428,22 @@ fun AdvancedPage() {
             )
 
             Text(
-                text = "日志",
-                modifier = Modifier.titleItemPadding(),
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.primary,
-            )
-
-            TextSwitch(
-                title = "保存日志",
-                subtitle = "保存7天日志,帮助定位BUG",
-                checked = store.log2FileSwitch,
-                onCheckedChange = {
-                    storeFlow.value = store.copy(
-                        log2FileSwitch = it
-                    )
-                    if (!it) {
-                        context.mainVm.viewModelScope.launchTry(Dispatchers.IO) {
-                            val logFiles = LogUtils.getLogFiles()
-                            if (logFiles.isNotEmpty()) {
-                                logFiles.forEach { f ->
-                                    f.delete()
-                                }
-                                toast("已删除全部日志")
-                            }
-                        }
-                    }
-                })
-
-            if (store.log2FileSwitch) {
-                SettingItem(
-                    title = "导出日志",
-                    imageVector = Icons.Default.Share,
-                    onClick = {
-                        showShareLogDlg = true
-                    }
-                )
-            }
-
-            Text(
                 text = "其它",
                 modifier = Modifier.titleItemPadding(),
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.primary,
             )
 
-            TextSwitch(title = "前台悬浮窗",
-                subtitle = "添加透明悬浮窗,关闭可能导致不点击/点击缓慢",
+            TextSwitch(
+                title = "前台悬浮窗",
+                subtitle = "添加透明悬浮窗",
+                suffix = "查看作用",
+                onSuffixClick = {
+                    context.mainVm.dialogFlow.updateDialogOptions(
+                        title = "悬浮窗作用",
+                        text = "1.提高 GKD 前台优先级, 降低被系统杀死概率\n2.提高点击响应速度, 关闭后可能导致点击缓慢或不点击",
+                    )
+                },
                 checked = store.enableAbFloatWindow,
                 onCheckedChange = {
                     storeFlow.value = store.copy(

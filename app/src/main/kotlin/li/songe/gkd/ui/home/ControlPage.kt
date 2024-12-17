@@ -24,6 +24,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -44,9 +45,11 @@ import li.songe.gkd.ui.component.AuthCard
 import li.songe.gkd.ui.component.SettingItem
 import li.songe.gkd.ui.component.TextSwitch
 import li.songe.gkd.ui.style.EmptyHeight
+import li.songe.gkd.ui.style.itemHorizontalPadding
 import li.songe.gkd.ui.style.itemPadding
 import li.songe.gkd.util.HOME_PAGE_URL
 import li.songe.gkd.util.LocalNavController
+import li.songe.gkd.util.SafeR
 import li.songe.gkd.util.launchAsFn
 import li.songe.gkd.util.openUri
 import li.songe.gkd.util.ruleSummaryFlow
@@ -68,7 +71,7 @@ fun useControlPage(): ScaffoldExt {
         topBar = {
             TopAppBar(scrollBehavior = scrollBehavior, title = {
                 Text(
-                    text = controlNav.label,
+                    text = stringResource(SafeR.app_name),
                 )
             }, actions = {
                 IconButton(onClick = throttle {
@@ -79,7 +82,7 @@ fun useControlPage(): ScaffoldExt {
                         contentDescription = null,
                     )
                 }
-                IconButton(onClick = throttle { context.openUri(HOME_PAGE_URL) }) {
+                IconButton(onClick = throttle { openUri(HOME_PAGE_URL) }) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Outlined.HelpOutline,
                         contentDescription = null,
@@ -87,7 +90,7 @@ fun useControlPage(): ScaffoldExt {
                 }
             })
         }
-    ) { padding ->
+    ) { contentPadding ->
         val latestRecordDesc by vm.latestRecordDescFlow.collectAsState()
         val subsStatus by vm.subsStatusFlow.collectAsState()
         val store by storeFlow.collectAsState()
@@ -103,7 +106,7 @@ fun useControlPage(): ScaffoldExt {
         Column(
             modifier = Modifier
                 .verticalScroll(scrollState)
-                .padding(padding)
+                .padding(contentPadding)
         ) {
             if (writeSecureSettings) {
                 TextSwitch(
@@ -162,14 +165,14 @@ fun useControlPage(): ScaffoldExt {
 
             if (ruleSummary.slowGroupCount > 0) {
                 SettingItem(
-                    title = "耗时查询-${ruleSummary.slowGroupCount}",
-                    subtitle = "可能导致触发缓慢或更多耗电",
+                    title = "缓慢查询",
+                    subtitle = "存在 ${ruleSummary.slowGroupCount} 条记录",
                     onClick = {
                         navController.toDestinationsNavigator().navigate(SlowGroupPageDestination)
                     }
                 )
             }
-            HorizontalDivider()
+            HorizontalDivider(modifier = Modifier.padding(horizontal = itemHorizontalPadding))
             Column(
                 modifier = Modifier
                     .fillMaxWidth()

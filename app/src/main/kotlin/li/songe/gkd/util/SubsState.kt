@@ -186,7 +186,7 @@ val ruleSummaryFlow by lazy {
                 mutableMapOf<RawSubscription.RawGlobalGroup, List<GlobalRule>>()
             rawSubs.globalGroups.filter { g ->
                 (subGlobalSubsConfigs.find { c -> c.groupKey == g.key }?.enable
-                        ?: g.enable ?: true) && g.valid
+                    ?: g.enable ?: true) && g.valid
             }.forEach { groupRaw ->
                 val config = subGlobalSubsConfigs.find { c -> c.groupKey == groupRaw.key }
                 val g = ResolvedGlobalGroup(
@@ -291,6 +291,21 @@ fun getSubsStatus(ruleSummary: RuleSummary, count: Long): String {
 private fun loadSubs(id: Long): RawSubscription {
     val file = subsFolder.resolve("${id}.json")
     if (!file.exists()) {
+        // 某些设备出现这种情况
+        if (id == LOCAL_SUBS_ID) {
+            return RawSubscription(
+                id = LOCAL_SUBS_ID,
+                name = "本地订阅",
+                version = 0
+            )
+        }
+        if (id == LOCAL_HTTP_SUBS_ID) {
+            return RawSubscription(
+                id = LOCAL_HTTP_SUBS_ID,
+                name = "内存订阅",
+                version = 0
+            )
+        }
         error("订阅文件不存在")
     }
     val subscription = try {
@@ -322,12 +337,15 @@ private fun refreshRawSubsList(items: List<SubsItem>) {
 fun initSubsState() {
     subsItemsFlow.value
     appScope.launchTry(Dispatchers.IO) {
-        subsRefreshingFlow.value = true
         updateSubsFileMutex.withLock {
-            val items = DbSet.subsItemDao.queryAll()
-            refreshRawSubsList(items)
+            subsRefreshingFlow.value = true
+            try {
+                val items = DbSet.subsItemDao.queryAll()
+                refreshRawSubsList(items)
+            } finally {
+                subsRefreshingFlow.value = false
+            }
         }
-        subsRefreshingFlow.value = false
     }
 }
 
@@ -384,53 +402,56 @@ fun checkSubsUpdate(showToast: Boolean = false) = appScope.launchTry(Dispatchers
     if (updateSubsMutex.isLocked || subsRefreshingFlow.value) {
         return@launchTry
     }
-    subsRefreshingFlow.value = true
     updateSubsMutex.withLock {
-        if (!withContext(Dispatchers.IO) { NetworkUtils.isAvailable() }) {
-            if (showToast) {
-                toast("网络不可用")
-            }
-            return@withLock
-        }
-        LogUtils.d("开始检测更新")
-        val localSubsEntries =
-            subsEntriesFlow.value.filter { e -> e.subsItem.id < 0 && e.subscription == null }
-        val subsEntries = subsEntriesFlow.value.filter { e -> e.subsItem.id >= 0 }
-        refreshRawSubsList(localSubsEntries.map { e -> e.subsItem })
-
-        var successNum = 0
-        subsEntries.forEach { subsEntry ->
-            try {
-                val newSubsRaw = updateSubs(subsEntry)
-                if (newSubsRaw != null) {
-                    updateSubscription(newSubsRaw)
-                    successNum++
+        subsRefreshingFlow.value = true
+        try {
+            if (!NetworkUtils.isAvailable()) {
+                if (showToast) {
+                    toast("网络不可用")
                 }
-                if (subsRefreshErrorsFlow.value.contains(subsEntry.subsItem.id)) {
-                    subsRefreshErrorsFlow.update {
-                        it.toMutableMap().apply {
-                            remove(subsEntry.subsItem.id)
+                return@withLock
+            }
+            LogUtils.d("开始检测更新")
+            val localSubsEntries =
+                subsEntriesFlow.value.filter { e -> e.subsItem.id < 0 && e.subscription == null }
+            val subsEntries = subsEntriesFlow.value.filter { e -> e.subsItem.id >= 0 }
+            refreshRawSubsList(localSubsEntries.map { e -> e.subsItem })
+
+            var successNum = 0
+            subsEntries.forEach { subsEntry ->
+                try {
+                    val newSubsRaw = updateSubs(subsEntry)
+                    if (newSubsRaw != null) {
+                        updateSubscription(newSubsRaw)
+                        successNum++
+                    }
+                    if (subsRefreshErrorsFlow.value.contains(subsEntry.subsItem.id)) {
+                        subsRefreshErrorsFlow.update {
+                            it.toMutableMap().apply {
+                                remove(subsEntry.subsItem.id)
+                            }
                         }
                     }
-                }
-            } catch (e: Exception) {
-                subsRefreshErrorsFlow.update {
-                    it.toMutableMap().apply {
-                        set(subsEntry.subsItem.id, e)
+                } catch (e: Exception) {
+                    subsRefreshErrorsFlow.update {
+                        it.toMutableMap().apply {
+                            set(subsEntry.subsItem.id, e)
+                        }
                     }
+                    LogUtils.d("检测更新失败", e)
                 }
-                LogUtils.d("检测更新失败", e)
             }
-        }
-        if (showToast) {
-            if (successNum > 0) {
-                toast("更新 $successNum 条订阅")
-            } else {
-                toast("暂无更新")
+            if (showToast) {
+                if (successNum > 0) {
+                    toast("更新 $successNum 条订阅")
+                } else {
+                    toast("暂无更新")
+                }
             }
+            LogUtils.d("结束检测更新")
+            delay(500)
+        } finally {
+            subsRefreshingFlow.value = false
         }
-        LogUtils.d("结束检测更新")
     }
-    delay(500)
-    subsRefreshingFlow.value = false
 }

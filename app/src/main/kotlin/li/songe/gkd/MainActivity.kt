@@ -5,6 +5,7 @@ import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -16,7 +17,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -27,6 +30,9 @@ import com.dylanc.activityresult.launcher.PickContentLauncher
 import com.dylanc.activityresult.launcher.StartActivityLauncher
 import com.ramcosta.composedestinations.DestinationsNavHost
 import com.ramcosta.composedestinations.generated.NavGraphs
+import com.ramcosta.composedestinations.generated.destinations.AuthA11YPageDestination
+import com.ramcosta.composedestinations.utils.currentDestinationAsState
+import com.ramcosta.composedestinations.utils.toDestinationsNavigator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
@@ -44,6 +50,7 @@ import li.songe.gkd.service.fixRestartService
 import li.songe.gkd.service.updateLauncherAppId
 import li.songe.gkd.ui.component.BuildDialog
 import li.songe.gkd.ui.theme.AppTheme
+import li.songe.gkd.util.EditGithubCookieDlg
 import li.songe.gkd.util.LocalNavController
 import li.songe.gkd.util.UpgradeDialog
 import li.songe.gkd.util.appInfoCacheFlow
@@ -54,6 +61,7 @@ import li.songe.gkd.util.map
 import li.songe.gkd.util.openApp
 import li.songe.gkd.util.openUri
 import li.songe.gkd.util.storeFlow
+import li.songe.gkd.util.toast
 import kotlin.reflect.KClass
 import kotlin.reflect.jvm.jvmName
 
@@ -66,6 +74,7 @@ class MainActivity : ComponentActivity() {
         installSplashScreen()
         enableEdgeToEdge()
         fixTopPadding()
+        fixTransparentNavigationBar()
         super.onCreate(savedInstanceState)
         mainVm
         launcher
@@ -90,9 +99,12 @@ class MainActivity : ComponentActivity() {
                         navController = navController,
                         navGraph = NavGraphs.root
                     )
+                    AccessRestrictedSettingsDlg()
                     ShizukuErrorDialog(mainVm.shizukuErrorFlow)
                     AuthDialog(mainVm.authReasonFlow)
                     BuildDialog(mainVm.dialogFlow)
+                    mainVm.uploadOptions.ShowDialog()
+                    EditGithubCookieDlg(mainVm.showEditCookieDlgFlow)
                     if (META.updateEnabled) {
                         UpgradeDialog(mainVm.updateStatus)
                     }
@@ -185,6 +197,16 @@ fun syncFixState() {
     }
 }
 
+private fun Activity.fixTransparentNavigationBar() {
+    // 修复在浅色主题下导航栏背景不透明的问题
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        window.isNavigationBarContrastEnforced = false
+    } else {
+        @Suppress("DEPRECATION")
+        window.navigationBarColor = Color.TRANSPARENT
+    }
+}
+
 private fun Activity.fixTopPadding() {
     // 当调用系统分享时, 会导致状态栏区域消失, 应用整体上移, 设置一个 top padding 保证不上移
     var tempTop: Int? = null
@@ -229,14 +251,14 @@ private fun ShizukuErrorDialog(stateFlow: MutableStateFlow<Boolean>) {
                 if (installed) {
                     TextButton(onClick = {
                         stateFlow.value = false
-                        app.openApp(appId)
+                        openApp(appId)
                     }) {
                         Text(text = "打开 Shizuku")
                     }
                 } else {
                     TextButton(onClick = {
                         stateFlow.value = false
-                        app.openUri("https://shizuku.rikka.app/")
+                        openUri("https://gkd.li?r=4")
                     }) {
                         Text(text = "去下载")
                     }
@@ -247,6 +269,51 @@ private fun ShizukuErrorDialog(stateFlow: MutableStateFlow<Boolean>) {
                     Text(text = "我知道了")
                 }
             }
+        )
+    }
+}
+
+
+val accessRestrictedSettingsShowFlow = MutableStateFlow(false)
+
+@Composable
+fun AccessRestrictedSettingsDlg() {
+    val accessRestrictedSettingsShow by accessRestrictedSettingsShowFlow.collectAsState()
+    val navController = LocalNavController.current
+    val currentDestination by navController.currentDestinationAsState()
+    val isA11yPage = currentDestination?.route == AuthA11YPageDestination.route
+    LaunchedEffect(isA11yPage, accessRestrictedSettingsShow) {
+        if (isA11yPage && accessRestrictedSettingsShow) {
+            toast("请重新授权以解除限制")
+            accessRestrictedSettingsShowFlow.value = false
+        }
+    }
+    if (accessRestrictedSettingsShow && !isA11yPage) {
+        AlertDialog(
+            title = {
+                Text(text = "访问受限")
+            },
+            text = {
+                Text(text = "尽管 GKD 已持有[写入安全设置权限], 但无法生效, 系统可能在更新 GKD 后用更高级的权限(访问受限设置)限制了 GKD, 请重新授权解除限制")
+            },
+            onDismissRequest = {
+                accessRestrictedSettingsShowFlow.value = false
+            },
+            confirmButton = {
+                TextButton({
+                    accessRestrictedSettingsShowFlow.value = false
+                    navController.toDestinationsNavigator().navigate(AuthA11YPageDestination)
+                }) {
+                    Text(text = "前往授权")
+                }
+            },
+            dismissButton = {
+                TextButton({
+                    accessRestrictedSettingsShowFlow.value = false
+                }) {
+                    Text(text = "关闭")
+                }
+            },
         )
     }
 }
