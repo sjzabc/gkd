@@ -79,7 +79,7 @@ fun openA11ySettings() {
     app.tryStartActivity(intent)
 }
 
-fun Context.openUri(uri: String) {
+fun openUri(uri: String) {
     val u = try {
         Uri.parse(uri)
     } catch (e: Exception) {
@@ -89,14 +89,14 @@ fun Context.openUri(uri: String) {
     }
     val intent = Intent(Intent.ACTION_VIEW, u)
     intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    tryStartActivity(intent)
+    app.tryStartActivity(intent)
 }
 
-fun Context.openApp(appId: String) {
-    val intent = packageManager.getLaunchIntentForPackage(appId)
+fun openApp(appId: String) {
+    val intent = app.packageManager.getLaunchIntentForPackage(appId)
     if (intent != null) {
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        tryStartActivity(intent)
+        app.tryStartActivity(intent)
     } else {
         toast("请检查此应用是否安装")
     }

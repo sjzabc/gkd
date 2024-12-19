@@ -9,9 +9,11 @@ import android.os.Build
 import com.blankj.utilcode.util.LogUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
+import li.songe.gkd.META
 import li.songe.gkd.app
 import li.songe.gkd.appScope
 import li.songe.gkd.data.AppInfo
@@ -35,17 +37,27 @@ val orderedAppInfosFlow by lazy {
     }
 }
 
+// https://github.com/orgs/gkd-kit/discussions/761
+// 某些设备在应用更新后出现权限错乱/缓存错乱
+private const val MINIMUM_NORMAL_APP_SIZE = 8
+val mayQueryPkgNoAccessFlow by lazy {
+    appInfoCacheFlow.map(appScope) { c ->
+        c.values.count { a -> !a.isSystem && !a.hidden && a.id != META.appId } < MINIMUM_NORMAL_APP_SIZE
+    }
+}
+
+private val willUpdateAppIds by lazy { MutableStateFlow(emptySet<String>()) }
+
 private val packageReceiver by lazy {
     object : BroadcastReceiver() {
-        /**
-         * 例: 小米应用商店更新应用产生连续 3个事件: PACKAGE_REMOVED->PACKAGE_ADDED->PACKAGE_REPLACED
-         *
-         */
         override fun onReceive(context: Context?, intent: Intent?) {
             val appId = intent?.data?.schemeSpecificPart ?: return
             if (intent.action == Intent.ACTION_PACKAGE_ADDED || intent.action == Intent.ACTION_PACKAGE_REPLACED || intent.action == Intent.ACTION_PACKAGE_REMOVED) {
-                // update
-                updateAppInfo(appId)
+                /**
+                 * 例: 小米应用商店更新应用产生连续 3个事件: PACKAGE_REMOVED->PACKAGE_ADDED->PACKAGE_REPLACED
+                 * 使用 Flow + debounce 优化合并
+                 */
+                willUpdateAppIds.update { it + appId }
             }
         }
     }.apply {
@@ -70,35 +82,38 @@ private val packageReceiver by lazy {
     }
 }
 
+private fun getAppInfo(appId: String): AppInfo? {
+    return try {
+        app.packageManager.getPackageInfo(appId, 0)
+    } catch (_: PackageManager.NameNotFoundException) {
+        null
+    }?.toAppInfo()
+}
 
-private val updateAppMutex by lazy { Mutex() }
+val updateAppMutex = MutexState()
 
-private fun updateAppInfo(appId: String) {
-    appScope.launchTry(Dispatchers.IO) {
-        val packageManager = app.packageManager
-        updateAppMutex.withLock {
-            val newMap = appInfoCacheFlow.value.toMutableMap()
-            val info = try {
-                packageManager.getPackageInfo(appId, 0)
-            } catch (e: PackageManager.NameNotFoundException) {
-                null
-            }
+private suspend fun updateAppInfo(appIds: Set<String>) {
+    if (appIds.isEmpty()) return
+    willUpdateAppIds.update { it - appIds }
+    updateAppMutex.withLock {
+        LogUtils.d("updateAppInfo", appIds)
+        val newMap = appInfoCacheFlow.value.toMutableMap()
+        appIds.forEach { appId ->
+            val info = getAppInfo(appId)
             if (info != null) {
-                newMap[appId] = info.toAppInfo()
+                newMap[appId] = info
             } else {
                 newMap.remove(appId)
             }
-            appInfoCacheFlow.value = newMap
         }
+        appInfoCacheFlow.value = newMap
     }
 }
 
-val appRefreshingFlow = MutableStateFlow(false)
 
 suspend fun initOrResetAppInfoCache() {
-    if (updateAppMutex.isLocked) return
+    if (updateAppMutex.mutex.isLocked) return
     LogUtils.d("initOrResetAppInfoCache start")
-    appRefreshingFlow.value = true
     updateAppMutex.withLock {
         val oldAppIds = appInfoCacheFlow.value.keys
         val appMap = appInfoCacheFlow.value.toMutableMap()
@@ -111,7 +126,6 @@ suspend fun initOrResetAppInfoCache() {
         }
         appInfoCacheFlow.value = appMap
     }
-    appRefreshingFlow.value = false
     LogUtils.d("initOrResetAppInfoCache end")
 }
 
@@ -119,5 +133,8 @@ fun initAppState() {
     packageReceiver
     appScope.launchTry(Dispatchers.IO) {
         initOrResetAppInfoCache()
+        willUpdateAppIds.debounce(1000)
+            .filter { it.isNotEmpty() }
+            .collect { updateAppInfo(it) }
     }
 }

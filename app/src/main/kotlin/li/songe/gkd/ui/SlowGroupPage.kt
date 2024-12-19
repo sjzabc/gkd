@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -38,6 +37,7 @@ import li.songe.gkd.ui.component.EmptyText
 import li.songe.gkd.ui.component.updateDialogOptions
 import li.songe.gkd.ui.style.EmptyHeight
 import li.songe.gkd.ui.style.itemPadding
+import li.songe.gkd.ui.style.scaffoldPadding
 import li.songe.gkd.util.LocalNavController
 import li.songe.gkd.util.ProfileTransitions
 import li.songe.gkd.util.appInfoCacheFlow
@@ -68,12 +68,12 @@ fun SlowGroupPage() {
                         )
                     }
                 },
-                title = { Text(text = if (ruleSummary.slowGroupCount > 0) "缓慢查询-${ruleSummary.slowGroupCount}" else "缓慢查询") },
+                title = { Text(text = "缓慢查询") },
                 actions = {
                     IconButton(onClick = throttle {
                         context.mainVm.dialogFlow.updateDialogOptions(
                             title = "缓慢查询",
-                            text = "任意单个规则同时满足以下 3 个条件即判定为缓慢查询\n\n1. 选择器右侧无法快速查询且不是主动查询, 或内部使用<<且无法快速查询\n2. preKeys 为空\n3. matchTime 为空或大于 10s",
+                            text = "任意单个规则同时满足以下 3 个条件即判定为缓慢查询\n\n1. 选择器右侧无法快速查询且不是主动查询, 或内部使用<<且无法快速查询\n2. preKeys 为空\n3. matchTime 为空或大于 10s\n\n缓慢查询可能导致触发缓慢或更多耗电",
                         )
                     }) {
                         Icon(Icons.Outlined.Info, contentDescription = null)
@@ -81,8 +81,10 @@ fun SlowGroupPage() {
                 }
             )
         }
-    ) { padding ->
-        LazyColumn(modifier = Modifier.padding(padding)) {
+    ) { contentPadding ->
+        LazyColumn(
+            modifier = Modifier.scaffoldPadding(contentPadding)
+        ) {
             items(
                 ruleSummary.slowGlobalGroups,
                 { (_, r) -> "${r.subsItem.id}-${r.group.key}" }
@@ -90,12 +92,14 @@ fun SlowGroupPage() {
                 SlowGroupCard(
                     modifier = Modifier
                         .clickable(onClick = throttle {
-                            navController.toDestinationsNavigator().navigate(
-                                GlobalRulePageDestination(
-                                    rule.subsItem.id,
-                                    group.key
+                            navController
+                                .toDestinationsNavigator()
+                                .navigate(
+                                    GlobalRulePageDestination(
+                                        rule.subsItem.id,
+                                        group.key
+                                    )
                                 )
-                            )
                         })
                         .itemPadding(),
                     title = group.name,
@@ -109,13 +113,15 @@ fun SlowGroupPage() {
                 SlowGroupCard(
                     modifier = Modifier
                         .clickable(onClick = throttle {
-                            navController.toDestinationsNavigator().navigate(
-                                AppItemPageDestination(
-                                    rule.subsItem.id,
-                                    rule.app.id,
-                                    group.key
+                            navController
+                                .toDestinationsNavigator()
+                                .navigate(
+                                    AppItemPageDestination(
+                                        rule.subsItem.id,
+                                        rule.app.id,
+                                        group.key
+                                    )
                                 )
-                            )
                         })
                         .itemPadding(),
                     title = group.name,

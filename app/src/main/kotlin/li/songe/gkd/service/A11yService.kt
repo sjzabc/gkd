@@ -126,7 +126,6 @@ class A11yService : AccessibilityService(), OnCreate, OnA11yConnected, OnA11yEve
             val cache = A11yContext(true)
 
             val targetNode = serviceVal.safeActiveWindow?.let {
-                cache.rootCache = it
                 cache.querySelector(
                     it,
                     selector,
@@ -180,19 +179,42 @@ private fun A11yService.useMatchRule() {
     var lastContentEventTime = 0L
     val queryEvents = mutableListOf<A11yEvent>()
     var queryTaskJob: Job?
+
+
     fun newQueryTask(
         byEvent: A11yEvent? = null,
         byForced: Boolean = false,
         delayRule: ResolvedRule? = null,
     ): Job = scope.launchTry(A11yService.queryThread) launchQuery@{
         queryTaskJob = coroutineContext[Job]
+        fun checkFutureJob() {
+            val t = System.currentTimeMillis()
+            if (t - lastTriggerTime < 3000L || t - appChangeTime < 5000L) {
+                scope.launch(A11yService.actionThread) {
+                    delay(300)
+                    if (queryTaskJob?.isActive != true) {
+                        newQueryTask()
+                    }
+                }
+            } else {
+                if (getAndUpdateCurrentRules().currentRules.any { r -> r.checkForced() && r.status.let { s -> s == RuleStatus.StatusOk || s == RuleStatus.Status5 } }) {
+                    scope.launch(A11yService.actionThread) {
+                        delay(300)
+                        if (queryTaskJob?.isActive != true) {
+                            newQueryTask(byForced = true)
+                        }
+                    }
+                }
+            }
+        }
+
         val newEvents = if (delayRule != null) {// 延迟规则不消耗事件
             null
         } else {
             synchronized(queryEvents) {
                 // 不能在 synchronized 内获取节点, 否则将阻塞事件处理
                 if (byEvent != null && queryEvents.isEmpty()) {
-                    return@launchQuery
+                    return@launchQuery checkFutureJob()
                 }
                 (if (queryEvents.size > 1) {
                     val hasDiffItem = queryEvents.any { e ->
@@ -235,12 +257,12 @@ private fun A11yService.useMatchRule() {
             }
         }
         val activityRule = getAndUpdateCurrentRules()
-        if (activityRule.currentRules.isEmpty() || !storeFlow.value.enableMatch) {
+        if (activityRule.skipMatch) {
             if (META.debuggable) {
                 Log.d("queryEvents", "没有规则或者禁用匹配")
             }
             // 如果当前应用没有规则/暂停匹配, 则不去调用获取事件节点避免阻塞
-            return@launchQuery
+            return@launchQuery checkFutureJob()
         }
         var lastNode = if (newEvents == null || newEvents.size <= 1) {
             newEvents?.firstOrNull()?.safeSource
@@ -255,7 +277,12 @@ private fun A11yService.useMatchRule() {
             }
         }
         var lastNodeUsed = false
-        a11yContext.clearOldAppNodeCache()
+        if (!a11yContext.clearOldAppNodeCache()) {
+            if (byEvent != null) { // 此为多数情况
+                // 新事件到来时, 若缓存清理不及时会导致无法查询到节点
+                a11yContext.clearNodeCache(lastNode)
+            }
+        }
         for (rule in activityRule.priorityRules) { // 规则数量有可能过多导致耗时过长
             if (delayRule != null && delayRule !== rule) continue
             val statusCode = rule.status
@@ -270,7 +297,11 @@ private fun A11yService.useMatchRule() {
             if (byForced && !rule.checkForced()) continue
             lastNode?.let { n ->
                 val refreshOk = (!lastNodeUsed) || (try {
-                    n.refresh()
+                    val e = n.refresh()
+                    if (e) {
+                        n.setGeneratedTime()
+                    }
+                    e
                 } catch (_: Exception) {
                     false
                 })
@@ -305,7 +336,7 @@ private fun A11yService.useMatchRule() {
                         }
                     }
                 }
-                return@launchQuery
+                return@launchQuery checkFutureJob()
             }
             if (!matchApp) continue
             val target = a11yContext.queryRule(rule, nodeVal) ?: continue
@@ -337,24 +368,7 @@ private fun A11yService.useMatchRule() {
                 }
             }
         }
-        val t = System.currentTimeMillis()
-        if (t - lastTriggerTime < 3000L || t - appChangeTime < 5000L) {
-            scope.launch(A11yService.actionThread) {
-                delay(300)
-                if (queryTaskJob?.isActive != true) {
-                    newQueryTask()
-                }
-            }
-        } else {
-            if (activityRule.currentRules.any { r -> r.checkForced() && r.status.let { s -> s == RuleStatus.StatusOk || s == RuleStatus.Status5 } }) {
-                scope.launch(A11yService.actionThread) {
-                    delay(300)
-                    if (queryTaskJob?.isActive != true) {
-                        newQueryTask(byForced = true)
-                    }
-                }
-            }
-        }
+        checkFutureJob()
     }
 
     var lastGetAppIdTime = 0L
@@ -440,9 +454,9 @@ private fun A11yService.useMatchRule() {
                 updateTopActivity(TopActivity(rightAppId))
             }
         }
-
-        if (getAndUpdateCurrentRules().currentRules.isEmpty() || !storeFlow.value.enableMatch || evAppId != rightAppId) {
-            // 放在 evAppId != rightAppId 的前面使得 TopActivity 能借助 lastTopActivity 恢复
+        val activityRule = getAndUpdateCurrentRules()
+        // 放在 evAppId != rightAppId 的前面使得 TopActivity 能借助 lastTopActivity 恢复
+        if (evAppId != rightAppId || activityRule.skipConsumeEvent || !storeFlow.value.enableMatch) {
             return@launchEvent
         }
 
@@ -510,11 +524,11 @@ private fun A11yService.useAutoCheckShizuku() {
     var lastCheckShizukuTime = 0L
     onA11yEvent {
         // 借助无障碍轮询校验 shizuku 权限, 因为 shizuku 可能无故被关闭
-        if ((storeFlow.value.enableShizukuActivity || storeFlow.value.enableShizukuClick) && it.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {// 筛选降低判断频率
+        if ((storeFlow.value.enableShizukuActivity || storeFlow.value.enableShizukuClick) && it.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && it.packageName == launcherAppId) {// 筛选降低判断频率
             val t = System.currentTimeMillis()
             if (t - lastCheckShizukuTime > 10 * 60_000L) {
                 lastCheckShizukuTime = t
-                scope.launchTry(Dispatchers.IO) {
+                appScope.launchTry(Dispatchers.IO) {
                     shizukuOkState.updateAndGet()
                 }
             }
@@ -583,7 +597,7 @@ private fun A11yService.useAliveView() {
 private fun A11yService.useAutoUpdateSubs() {
     var lastUpdateSubsTime = System.currentTimeMillis() - 25000
     onA11yEvent {// 借助 无障碍事件 触发自动检测更新
-        if (it.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {// 筛选降低判断频率
+        if (it.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && it.packageName == launcherAppId) {// 筛选降低判断频率
             val i = storeFlow.value.updateSubsInterval
             if (i <= 0) return@onA11yEvent
             val t = System.currentTimeMillis()

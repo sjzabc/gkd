@@ -31,6 +31,7 @@ import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
@@ -49,15 +50,16 @@ import li.songe.gkd.data.deleteSubscription
 import li.songe.gkd.ui.home.HomeVm
 import li.songe.gkd.util.LOCAL_SUBS_ID
 import li.songe.gkd.util.LocalNavController
+import li.songe.gkd.util.SafeR
 import li.songe.gkd.util.formatTimeAgo
 import li.songe.gkd.util.launchTry
 import li.songe.gkd.util.map
 import li.songe.gkd.util.openUri
 import li.songe.gkd.util.subsLoadErrorsFlow
 import li.songe.gkd.util.subsRefreshErrorsFlow
-import li.songe.gkd.util.subsRefreshingFlow
 import li.songe.gkd.util.throttle
 import li.songe.gkd.util.toast
+import li.songe.gkd.util.updateSubsMutex
 
 
 @OptIn(ExperimentalComposeUiApi::class)
@@ -81,7 +83,7 @@ fun SubsItemCard(
     val subsRefreshError by remember(subsItem.id) {
         subsRefreshErrorsFlow.map(vm.viewModelScope) { it[subsItem.id] }
     }.collectAsState()
-    val subsRefreshing by subsRefreshingFlow.collectAsState()
+    val subsRefreshing by updateSubsMutex.state.collectAsState()
     var expanded by remember { mutableStateOf(false) }
     val dragged by interactionSource.collectIsDraggedAsState()
     var clickPositionX by remember {
@@ -91,7 +93,7 @@ fun SubsItemCard(
         if (!dragged) {
             if (isSelectedMode) {
                 onSelectedChange?.invoke()
-            } else if (!subsRefreshingFlow.value) {
+            } else if (!updateSubsMutex.mutex.isLocked) {
                 expanded = true
             }
         }
@@ -124,6 +126,7 @@ fun SubsItemCard(
             offsetX = clickPositionX,
             vm = vm
         )
+
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.padding(8.dp),
@@ -134,30 +137,12 @@ fun SubsItemCard(
             ) {
                 if (subscription != null) {
                     Text(
-                        text = index.toString() + ". " + (subscription.name),
+                        text = "$index.${subscription.name}",
                         maxLines = 1,
                         softWrap = false,
                         overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.bodyLarge,
                     )
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        Text(
-                            text = subsItem.sourceText,
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                        Text(
-                            text = formatTimeAgo(subsItem.mtime),
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                        if (subsItem.id >= 0) {
-                            Text(
-                                text = "v" + (subscription.version.toString()),
-                                style = MaterialTheme.typography.bodyMedium,
-                            )
-                        }
-                    }
                     Text(
                         text = subscription.numText,
                         style = MaterialTheme.typography.bodyMedium,
@@ -167,9 +152,35 @@ fun SubsItemCard(
                             LocalContentColor.current
                         }
                     )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (subsItem.id >= 0) {
+                            if (subscription.author != null) {
+                                Text(
+                                    text = subscription.author,
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                            }
+                            Text(
+                                text = "v" + (subscription.version.toString()),
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        } else {
+                            Text(
+                                text = stringResource(SafeR.app_name),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.secondary,
+                            )
+                        }
+                        Text(
+                            text = formatTimeAgo(subsItem.mtime),
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
                 } else {
                     Text(
-                        text = "${index}. id:${subsItem.id}",
+                        text = "id=${subsItem.id}",
                         maxLines = 1,
                         softWrap = false,
                         overflow = TextOverflow.Ellipsis,
@@ -189,13 +200,13 @@ fun SubsItemCard(
                 }
                 if (subsRefreshError != null) {
                     Text(
-                        text = "加载错误: ${subsRefreshError?.message}",
+                        text = "更新错误: ${subsRefreshError?.message}",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.error
                     )
                 }
             }
-            Spacer(modifier = Modifier.width(10.dp))
+            Spacer(modifier = Modifier.width(4.dp))
             Switch(
                 checked = subsItem.enable,
                 enabled = !isSelectedMode,
@@ -274,7 +285,7 @@ private fun SubsMenuItem(
                 },
                 onClick = {
                     onExpandedChange(false)
-                    context.openUri(supportUri)
+                    openUri(supportUri)
                 }
             )
         }

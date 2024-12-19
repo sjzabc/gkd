@@ -13,8 +13,6 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import li.songe.gkd.appScope
@@ -69,11 +67,9 @@ val subsEntriesFlow by lazy {
     }.stateIn(appScope, SharingStarted.Eagerly, emptyList())
 }
 
-
-private val updateSubsFileMutex by lazy { Mutex() }
 fun updateSubscription(subscription: RawSubscription) {
     appScope.launchTry {
-        updateSubsFileMutex.withLock {
+        updateSubsMutex.withLock {
             val newMap = subsIdToRawFlow.value.toMutableMap()
             if (subscription.id < 0 && newMap[subscription.id]?.version == subscription.version) {
                 newMap[subscription.id] = subscription.copy(version = subscription.version + 1)
@@ -186,7 +182,7 @@ val ruleSummaryFlow by lazy {
                 mutableMapOf<RawSubscription.RawGlobalGroup, List<GlobalRule>>()
             rawSubs.globalGroups.filter { g ->
                 (subGlobalSubsConfigs.find { c -> c.groupKey == g.key }?.enable
-                        ?: g.enable ?: true) && g.valid
+                    ?: g.enable ?: true) && g.valid
             }.forEach { groupRaw ->
                 val config = subGlobalSubsConfigs.find { c -> c.groupKey == groupRaw.key }
                 val g = ResolvedGlobalGroup(
@@ -291,6 +287,21 @@ fun getSubsStatus(ruleSummary: RuleSummary, count: Long): String {
 private fun loadSubs(id: Long): RawSubscription {
     val file = subsFolder.resolve("${id}.json")
     if (!file.exists()) {
+        // 某些设备出现这种情况
+        if (id == LOCAL_SUBS_ID) {
+            return RawSubscription(
+                id = LOCAL_SUBS_ID,
+                name = "本地订阅",
+                version = 0
+            )
+        }
+        if (id == LOCAL_HTTP_SUBS_ID) {
+            return RawSubscription(
+                id = LOCAL_HTTP_SUBS_ID,
+                name = "内存订阅",
+                version = 0
+            )
+        }
         error("订阅文件不存在")
     }
     val subscription = try {
@@ -322,18 +333,14 @@ private fun refreshRawSubsList(items: List<SubsItem>) {
 fun initSubsState() {
     subsItemsFlow.value
     appScope.launchTry(Dispatchers.IO) {
-        subsRefreshingFlow.value = true
-        updateSubsFileMutex.withLock {
+        updateSubsMutex.withLock {
             val items = DbSet.subsItemDao.queryAll()
             refreshRawSubsList(items)
         }
-        subsRefreshingFlow.value = false
     }
 }
 
-
-private val updateSubsMutex by lazy { Mutex() }
-val subsRefreshingFlow = MutableStateFlow(false)
+val updateSubsMutex = MutexState()
 
 private suspend fun updateSubs(subsEntry: SubsEntry): RawSubscription? {
     val subsItem = subsEntry.subsItem
@@ -381,12 +388,11 @@ private suspend fun updateSubs(subsEntry: SubsEntry): RawSubscription? {
 }
 
 fun checkSubsUpdate(showToast: Boolean = false) = appScope.launchTry(Dispatchers.IO) {
-    if (updateSubsMutex.isLocked || subsRefreshingFlow.value) {
+    if (updateSubsMutex.mutex.isLocked) {
         return@launchTry
     }
-    subsRefreshingFlow.value = true
     updateSubsMutex.withLock {
-        if (!withContext(Dispatchers.IO) { NetworkUtils.isAvailable() }) {
+        if (!NetworkUtils.isAvailable()) {
             if (showToast) {
                 toast("网络不可用")
             }
@@ -430,7 +436,6 @@ fun checkSubsUpdate(showToast: Boolean = false) = appScope.launchTry(Dispatchers
             }
         }
         LogUtils.d("结束检测更新")
+        delay(500)
     }
-    delay(500)
-    subsRefreshingFlow.value = false
 }
